@@ -8,6 +8,7 @@ const bcrypt = require("bcryptjs");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+const cookieOptions = require("../config/cookieOptions");
 // ------------------ SIGNUP (Email/Password) ------------------
 const signup = async (req, res) => {
   try {
@@ -64,7 +65,9 @@ const verifyOtp = async (req, res) => {
     await user.save();
 
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
-    res.json({ message: "Email verified successfully", token, user });
+        res
+      .cookie("token", token, cookieOptions)
+      .json({ message: "Email verified successfully", user });
   } catch (err) {
     console.error("OTP verification error:", err.message);
     res.status(500).json({ error: "Server error during OTP verification" });
@@ -84,7 +87,10 @@ const login = async (req, res) => {
 
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
 
-    res.json({ message: "Login successful", token, user });
+  res
+      .cookie("token", token, cookieOptions)
+      .json({ message: "Login successful", user, token });
+
   } catch (err) {
     console.error("Login error:", err.message);
     res.status(500).json({ error: "Server error during login" });
@@ -108,7 +114,10 @@ const googleSignup = async (req, res) => {
 
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
 
-    res.status(201).json({ message: "Google signup successful", token, user });
+    res
+      .cookie("token", token, cookieOptions)
+      .status(201)
+      .json({ message: "Google signup successful", user });
   } catch (err) {
     console.error("Google signup error:", err.message);
     res.status(500).json({ error: "Server error during Google signup" });
@@ -135,7 +144,10 @@ const googleLogin = async (req, res) => {
 
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
 
-    res.json({ message: "Google login successful", token, user });
+    res
+      .cookie("token", token, cookieOptions)
+      .status(201)
+      .json({ message: "Google login successful", user, token });
   } catch (err) {
     console.error("Google login error:", err.message);
     res.status(500).json({ error: "Server error during Google login" });
