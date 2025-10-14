@@ -67,7 +67,7 @@ const verifyOtp = async (req, res) => {
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
         res
       .cookie("token", token, cookieOptions)
-      .json({ message: "Email verified successfully", user });
+      .json({ message: "Email verified successfully", user  });
   } catch (err) {
     console.error("OTP verification error:", err.message);
     res.status(500).json({ error: "Server error during OTP verification" });

@@ -3,8 +3,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const db = require('./config/db'); // if you have one
 const authRoutes = require('./routes/auth');
-
-
+const crawlRoutes = require('./routes/crawl');
 
 // Middleware
 const app = express();
@@ -22,6 +21,7 @@ app.use(
 
 // Routes
 app.use("/", authRoutes);
+app.use("/", crawlRoutes);
 
 // Test route
 app.get("/", (req, res) => {
