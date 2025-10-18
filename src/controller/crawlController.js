@@ -6,12 +6,16 @@ const crawlQueue = require("../utils/bull");
 const submitCrawlJob = async (req, res) => {
   try {
     const { githubUrl, linkedinUrl } = req.body;
+    // const { githubUrl } = req.body;
     const userId = req.user.id; // assuming you have auth middleware
 
     if (!githubUrl || !linkedinUrl) {
       return res.status(400).json({ message: "Both URLs are required" });
     }
-
+    // if (!githubUrl) {
+    //   return res.status(400).json({ message: "GitHub URL is required" });
+    // }
+    
     // 1️⃣ Find or create StudentProfile
     let profile = await StudentProfile.findOne({ userId });
 
@@ -21,6 +25,7 @@ const submitCrawlJob = async (req, res) => {
         githubUrl,
         linkedinUrl,
         rawData: { github: {}, linkedin: {} },
+        // rawData: { github: {} },
       });
       await profile.save();
     } else {

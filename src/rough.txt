@@ -1,0 +1,546 @@
+// ...existing code...
+require("dotenv").config();
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
+
+const MAX_ATTEMPTS = 2;
+
+/**
+ * Random delay helper
+ * @param {number} min 
+ * @param {number} max 
+ */
+function randomDelay(min = 500, max = 1500) {
+    const delay = Math.floor(Math.random() * (max - min + 1) + min);
+    return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+async function launchBrowser() {
+    const chromePath = process.env.CHROME_PATH || undefined;
+    const headless = process.env.HEADLESS === "0" ? false : (process.env.HEADLESS === "1" ? true : true);
+    const browser = await puppeteer.launch({
+        headless,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+        defaultViewport: null,
+        executablePath: chromePath
+    });
+    const page = await browser.newPage();
+    // basic instrumentation
+    page.on("console", msg => console.log("PAGE_LOG:", msg.text()));
+    page.on("pageerror", err => console.error("PAGE_ERROR:", err.toString()));
+    page.on("response", res => {
+        const status = res.status();
+        if (status >= 400) console.warn("PAGE_RESPONSE_ERROR:", status, res.url());
+    });
+    await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+    );
+    await page.setViewport({ width: 1366, height: 768 });
+    return { browser, page };
+}
+
+/**
+ * Perform login on the given page. Returns true when logged in.
+ */
+async function ensureLoggedIn(page, email, password) {
+    // go to login page
+    await page.goto("https://www.linkedin.com/login", { waitUntil: "networkidle2", timeout: 60000 });
+    await randomDelay();
+
+    await page.waitForSelector("#username", { timeout: 15000 }).catch(() => null);
+    await page.waitForSelector("#password", { timeout: 15000 }).catch(() => null);
+
+    // fill
+    await page.type("#username", email, { delay: Math.floor(Math.random() * 30) + 30 }).catch(() => null);
+    await page.type("#password", password, { delay: Math.floor(Math.random() * 30) + 30 }).catch(() => null);
+    await randomDelay();
+
+    // click & wait for either navigation or logged-in UI
+    await Promise.all([
+        page.click("button[type='submit']").catch(() => null),
+        Promise.race([
+            page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => null),
+            page.waitForSelector('input[role="combobox"], nav[aria-label="Main"], .search-global-typeahead__input', { timeout: 60000 }).catch(() => null)
+        ])
+    ]).catch(() => null);
+
+    await randomDelay();
+
+    // check immediate login error
+    const loginError = await page.$(".alert.error, .form__error, .signin-form__error, .login__error");
+    if (loginError) return false;
+
+    const currentUrl = page.url();
+    const loggedInSelector = await page.$('input[role="combobox"], nav[aria-label="Main"], .search-global-typeahead__input');
+    return currentUrl.includes("/feed") || !!loggedInSelector;
+}
+
+/**
+ * Crawl a LinkedIn profile URL and return structured data.
+ * Attempts login+crawl up to MAX_ATTEMPTS.
+ * @param {string} profileUrl
+ * @returns {Promise<Object>}
+ */
+async function crawlLinkedInProfile(profileUrl) {
+    if (!profileUrl) throw new Error("Missing LinkedIn profile URL");
+    const email = process.env.LINKEDIN_EMAIL;
+    const password = process.env.LINKEDIN_PASSWORD;
+    if (!email || !password) throw new Error("LinkedIn credentials not set in .env");
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        let browser, page;
+        try {
+            ({ browser, page } = await launchBrowser());
+
+            // login
+            const loggedIn = await ensureLoggedIn(page, email, password);
+            if (!loggedIn) {
+                try { await page.screenshot({ path: `linkedin-login-failed-attempt-${attempt}.png`, fullPage: true }); } catch (_) {}
+                await browser.close();
+                if (attempt < MAX_ATTEMPTS) {
+                    await randomDelay(2000, 4000);
+                    continue;
+                }
+                return { success: false, message: "Unable to login to LinkedIn" };
+            }
+
+            // navigate to profile
+            await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 });
+            await randomDelay(1000, 2000);
+
+            // wait for top card or H1 (reduce empty evaluations)
+            await page.waitForSelector("h1, .pv-top-card, .text-heading-xlarge", { timeout: 30000 }).catch(() => null);
+            await randomDelay();
+
+            // try to open contact info modal (best-effort)
+            try {
+                const contactBtn = await page.$('a[data-control-name="contact_see_more"], button[data-control-name="contact_see_more"], .pv-top-card__contact-info');
+                if (contactBtn) {
+                    await contactBtn.click().catch(() => null);
+                    await page.waitForTimeout(1000);
+                }
+            } catch (_) {}
+
+            // evaluate profile content
+            const profile = await page.evaluate(() => {
+                const pickText = (sel, root = document) => root.querySelector(sel)?.innerText?.trim() || null;
+
+                const name =
+                    pickText('h1[class*="break-words"], h1, .text-heading-xlarge') ||
+                    pickText('.pv-top-card--list li, .top-card-layout__title') || "";
+
+                const headline =
+                    pickText('.text-body-medium.break-words, .pv-top-card--list .text-body-medium, .artdeco-entity-lockup__subtitle, .pv-top-card-section__headline') ||
+                    pickText('.pv-top-card__occupation') || "";
+
+                const location =
+                    pickText('.pv-top-card--list-bullet, .pv-top-card__location, .t-16.t-black--light') ||
+                    pickText('.text-body-small.inline.t-black--light.break-words') || "";
+
+                const about =
+                    pickText('#about ~ p, #about .pv-top-card-section__summary, .pv-about__summary-text, .core-section-container .lt-line-clamp__raw-line') ||
+                    pickText('.pv-about__summary-text') || "";
+
+                // skills
+                const skills = Array.from(document.querySelectorAll('.pv-skill-category-entity__name, .skill-pill, .pv-skill-entity__skill-name'))
+                    .map(n => n.innerText && n.innerText.trim())
+                    .filter(Boolean);
+
+                // education
+                const education = Array.from(document.querySelectorAll('#education .pv-education-entity, .pv-education-entity, .education-section li'))
+                    .map(el => ({
+                        school: el.querySelector('h3')?.innerText?.trim() || el.querySelector('.pv-entity__school-name')?.innerText?.trim() || "",
+                        degree: el.querySelector('.pv-entity__degree-name span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__degree-name')?.innerText?.trim() || "",
+                        period: el.querySelector('.pv-entity__dates span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__dates')?.innerText?.trim() || ""
+                    }));
+
+                // experience (brief)
+                const experiences = Array.from(document.querySelectorAll('.experience-section .pv-entity__position-group-pager li, .pv-position-entity, .pv-entity__position-group-item, .pv-profile-section__card-item'))
+                    .map(el => ({
+                        title: el.querySelector('h3')?.innerText?.trim() || el.querySelector('.t-bold')?.innerText?.trim() || "",
+                        company: el.querySelector('.pv-entity__secondary-title')?.innerText?.trim() || el.querySelector('.pv-entity__company-name')?.innerText?.trim() || "",
+                        period: el.querySelector('.pv-entity__date-range span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__dates')?.innerText?.trim() || "",
+                        description: el.querySelector('.pv-entity__description, .pv-entity__summary')?.innerText?.trim() || ""
+                    }));
+
+                // contact info modal (best-effort)
+                const contactModal = document.querySelector('.pv-contact-info__contact-type');
+                const contact = {};
+                if (contactModal) {
+                    contact.email = contactModal.querySelector('.ci-email a')?.innerText?.trim() || null;
+                    contact.phone = contactModal.querySelector('.ci-phone span')?.innerText?.trim() || null;
+                    contact.website = contactModal.querySelector('.ci-websites a')?.innerText?.trim() || null;
+                } else {
+                    // fallback selectors
+                    contact.email = document.querySelector('.ci-email a')?.innerText?.trim() || null;
+                    contact.phone = document.querySelector('.ci-phone span')?.innerText?.trim() || null;
+                }
+
+                return {
+                    name,
+                    headline,
+                    location,
+                    about,
+                    skills,
+                    education,
+                    experiences,
+                    contact
+                };
+            });
+
+            // screenshot for debugging
+            try { await page.screenshot({ path: "linkedin-crawl-result.png", fullPage: true }); } catch (_) {}
+
+            if (process.env.KEEP_BROWSER_OPEN === "1") {
+                console.log("KEEP_BROWSER_OPEN=1, leaving browser open.");
+                return { success: true, data: profile };
+            }
+
+            await browser.close();
+            return { success: true, data: profile };
+        } catch (err) {
+            try { if (page) await page.screenshot({ path: `linkedin-crawl-exception-${attempt}.png`, fullPage: true }); } catch (_) {}
+            if (browser) {
+                try { await browser.close(); } catch (_) {}
+            }
+            if (attempt < MAX_ATTEMPTS) {
+                await randomDelay(2000, 4000);
+                continue;
+            }
+            return { success: false, message: "Crawl failed: " + err.message };
+        }
+    }
+
+    return { success: false, message: "Crawl failed after retries." };
+}
+
+module.exports = { crawlLinkedInProfile };
+// ...existing code...
+
+
+
+
+-------------------------------------------------------------------------------------
+require("dotenv").config();
+
+// ✅ Step 1: Setup Puppeteer Extra with delayed stealth patch
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+
+// 👇 Delay applying the stealth plugin to avoid LinkedIn script conflicts
+(async () => {
+  await new Promise((r) => setTimeout(r, 100));
+  puppeteer.use(StealthPlugin());
+})();
+
+const MAX_ATTEMPTS = 2;
+
+/**
+ * Random delay helper
+ * @param {number} min 
+ * @param {number} max 
+ */
+function randomDelay(min = 500, max = 1500) {
+    const delay = Math.floor(Math.random() * (max - min + 1) + min);
+    return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+async function launchBrowser() {
+    const chromePath = process.env.CHROME_PATH || undefined;
+    // const headless = process.env.HEADLESS === "0" ? false : (process.env.HEADLESS === "1" ? true : true);
+    const headless = process.env.HEADLESS === "1" ? true : false;
+    const browser = await puppeteer.launch({
+        headless,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+        defaultViewport: null,
+        executablePath: chromePath
+    });
+    const page = await browser.newPage();
+    // basic instrumentation
+    // await page.setRequestInterception(true);
+    // page.on("request", (req) => {
+    //   const block = ["image", "media", "font", "stylesheet"];
+    //   if (block.includes(req.resourceType())) req.abort();
+    //   else req.continue();
+    // });
+
+    try {
+      await page.setRequestInterception(true);
+      page.on("request", (req) => {
+        const url = req.url();
+        const resourceType = req.resourceType();
+        // block heavy/tracking types only — keep 'stylesheet' and 'font'
+        const blockedTypes = ["image", "media", "websocket"];
+        const blockedUrls = /doubleclick|google-analytics|googlesyndication|adsystem|adservice|tracking|analytics/;
+        if (blockedTypes.includes(resourceType) || blockedUrls.test(url)) return req.abort();
+        return req.continue();
+      });
+    } catch (e) {
+      // ignore if interception unavailable
+    }
+    page.on("console", msg => console.log("PAGE_LOG:", msg.text()));
+    page.on("pageerror", err => console.error("PAGE_ERROR:", err.toString()));
+    page.on("response", res => {
+        const status = res.status();
+        if (status >= 400) console.warn("PAGE_RESPONSE_ERROR:", status, res.url());
+    });
+    await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+    );
+    await page.setViewport({ width: 1366, height: 768 });
+    return { browser, page };
+}
+
+/**
+ * Perform login on the given page. Returns true when logged in.
+ */
+async function ensureLoggedIn(page, email, password) {
+    // go to login page
+    await page.goto("https://www.linkedin.com/login", { waitUntil: "networkidle2", timeout: 60000 });
+    await randomDelay();
+
+    await page.waitForSelector("#username", { timeout: 15000 }).catch(() => null);
+    await page.waitForSelector("#password", { timeout: 15000 }).catch(() => null);
+
+    // fill
+    await page.type("#username", email, { delay: 40 }).catch(err => console.warn("Username field error:", err.message));
+    await page.type("#password", password, { delay: Math.floor(Math.random() * 30) + 30 }).catch(() => null);
+    await randomDelay();
+
+    // click & wait for either navigation or logged-in UI
+    // await Promise.all([
+    //     page.click("button[type='submit']").catch(() => null),
+    //     await Promise.race([
+    //       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 45000 }),
+    //       page.waitForSelector('input[role="combobox"]', { timeout: 45000 })
+    //     ])
+
+    // ]).catch(() => null);
+       // click and concurrently wait for navigation OR logged-in selector
+    await Promise.all([
+        page.click("button[type='submit']").catch(() => null),
+        Promise.race([
+          page.waitForNavigation({ waitUntil: "networkidle2", timeout: 45000 }).catch(() => null),
+          page.waitForSelector('input[role="combobox"]', { timeout: 45000 }).catch(() => null)
+       ])
+    ]).catch(() => null);
+
+    await randomDelay();
+
+    // check immediate login error
+    const loginError = await page.$(".alert.error, .form__error, .signin-form__error, .login__error");
+    if (loginError) return false;
+
+    // const currentUrl = page.url();
+    // const loggedInSelector = await page.$('input[role="combobox"], nav[aria-label="Main"], .search-global-typeahead__input');
+    // return currentUrl.includes("/feed") || !!loggedInSelector;
+
+    const currentUrl = page.url();
+
+// 🚨 Handle LinkedIn security or captcha challenge
+if (currentUrl.includes("checkpoint/challenge")) {
+  console.warn("⚠️ Login challenge detected! LinkedIn is asking for verification.");
+  return false;
+}
+
+// ✅ Successful login if redirected to feed or jobs page
+if (currentUrl.includes("/feed") || currentUrl.includes("/jobs")) {
+  console.log("✅ Login successful!");
+  return true;
+}
+}
+
+/**
+ * Crawl a LinkedIn profile URL and return structured data.
+ * Attempts login+crawl up to MAX_ATTEMPTS.
+ * @param {string} profileUrl
+ * @returns {Promise<Object>}
+ */
+async function crawlLinkedInProfile(profileUrl) {
+    if (!profileUrl) throw new Error("Missing LinkedIn profile URL");
+    const email = process.env.LINKEDIN_EMAIL;
+    const password = process.env.LINKEDIN_PASSWORD;
+    if (!email || !password) throw new Error("LinkedIn credentials not set in .env");
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        let browser, page;
+        try {
+            ({ browser, page } = await launchBrowser());
+
+            // login
+            const loggedIn = await ensureLoggedIn(page, email, password);
+            if (!loggedIn) {
+                try { await page.screenshot({ path: `linkedin-login-failed-attempt-${attempt}.png`, fullPage: true }); } catch (_) {}
+                await browser.close();
+                if (attempt < MAX_ATTEMPTS) {
+                    await randomDelay(2000, 4000);
+                    continue;
+                }
+                return { success: false, message: "Unable to login to LinkedIn" };
+            }
+
+            // navigate to profile
+            // await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 });
+            // await randomDelay(1000, 2000);
+
+            // // wait for top card or H1 (reduce empty evaluations)
+            // await page.waitForSelector("h1, .pv-top-card, .text-heading-xlarge", { timeout: 30000 }).catch(() => null);
+            // await randomDelay();
+
+            // // try to open contact info modal (best-effort)
+            // try {
+            //     const contactBtn = await page.$('a[data-control-name="contact_see_more"], button[data-control-name="contact_see_more"], .pv-top-card__contact-info');
+            //     if (contactBtn) {
+            //         await contactBtn.click().catch(() => null);
+            //         await page.waitForTimeout(1000);
+            //     }
+            // } catch (_) {}
+
+            // // evaluate profile content
+            // const profile = await page.evaluate(() => {
+            //     const pickText = (sel, root = document) => root.querySelector(sel)?.innerText?.trim() || null;
+
+            //     const name =
+            //         pickText('h1[class*="break-words"], h1, .text-heading-xlarge') ||
+            //         pickText('.pv-top-card--list li, .top-card-layout__title') || "";
+
+            //     // const headline =
+            //     //     pickText('.text-body-medium.break-words, .pv-top-card--list .text-body-medium, .artdeco-entity-lockup__subtitle, .pv-top-card-section__headline') ||
+            //     //     pickText('.pv-top-card__occupation') || "";
+
+            //     // const location =
+            //     //     pickText('.pv-top-card--list-bullet, .pv-top-card__location, .t-16.t-black--light') ||
+            //     //     pickText('.text-body-small.inline.t-black--light.break-words') || "";
+
+            //     // const about =
+            //     //     pickText('#about ~ p, #about .pv-top-card-section__summary, .pv-about__summary-text, .core-section-container .lt-line-clamp__raw-line') ||
+            //     //     pickText('.pv-about__summary-text') || "";
+
+            //     // // skills
+            //     // const skills = Array.from(document.querySelectorAll('.pv-skill-category-entity__name, .skill-pill, .pv-skill-entity__skill-name'))
+            //     //     .map(n => n.innerText && n.innerText.trim())
+            //     //     .filter(Boolean);
+
+            //     // // education
+            //     // const education = Array.from(document.querySelectorAll('#education .pv-education-entity, .pv-education-entity, .education-section li'))
+            //     //     .map(el => ({
+            //     //         school: el.querySelector('h3')?.innerText?.trim() || el.querySelector('.pv-entity__school-name')?.innerText?.trim() || "",
+            //     //         degree: el.querySelector('.pv-entity__degree-name span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__degree-name')?.innerText?.trim() || "",
+            //     //         period: el.querySelector('.pv-entity__dates span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__dates')?.innerText?.trim() || ""
+            //     //     }));
+
+            //     // // experience (brief)
+            //     // const experiences = Array.from(document.querySelectorAll('.experience-section .pv-entity__position-group-pager li, .pv-position-entity, .pv-entity__position-group-item, .pv-profile-section__card-item'))
+            //     //     .map(el => ({
+            //     //         title: el.querySelector('h3')?.innerText?.trim() || el.querySelector('.t-bold')?.innerText?.trim() || "",
+            //     //         company: el.querySelector('.pv-entity__secondary-title')?.innerText?.trim() || el.querySelector('.pv-entity__company-name')?.innerText?.trim() || "",
+            //     //         period: el.querySelector('.pv-entity__date-range span:nth-child(2)')?.innerText?.trim() || el.querySelector('.pv-entity__dates')?.innerText?.trim() || "",
+            //     //         description: el.querySelector('.pv-entity__description, .pv-entity__summary')?.innerText?.trim() || ""
+            //     //     }));
+
+            //     // // contact info modal (best-effort)
+            //     // const contactModal = document.querySelector('.pv-contact-info__contact-type');
+            //     // const contact = {};
+            //     // if (contactModal) {
+            //     //     contact.email = contactModal.querySelector('.ci-email a')?.innerText?.trim() || null;
+            //     //     contact.phone = contactModal.querySelector('.ci-phone span')?.innerText?.trim() || null;
+            //     //     contact.website = contactModal.querySelector('.ci-websites a')?.innerText?.trim() || null;
+            //     // } else {
+            //     //     // fallback selectors
+            //     //     contact.email = document.querySelector('.ci-email a')?.innerText?.trim() || null;
+            //     //     contact.phone = document.querySelector('.ci-phone span')?.innerText?.trim() || null;
+            //     // }
+
+            //     return {
+            //         name,
+            //         // headline,
+            //         // location,
+            //         // about,
+            //         // skills,
+            //         // education,
+            //         // experiences,
+            //         // contact
+            //     };
+            // });
+
+            // screenshot for debugging
+            // try { await page.screenshot({ path: "linkedin-crawl-result.png", fullPage: true }); } catch (_) {}
+
+            // if (process.env.KEEP_BROWSER_OPEN === "1") {
+            //     console.log("KEEP_BROWSER_OPEN=1, leaving browser open.");
+            //     // return { success: true, data: profile };
+            //     return { success: true, data: { message: "Browser left open for inspection." } };
+            // }
+            if (process.env.KEEP_BROWSER_OPEN === "1") {
+                console.log("KEEP_BROWSER_OPEN=1, leaving browser open.");
+               return { success: true, data: profile };
+            }
+
+            // properly close and return actual profile data
+            try { await browser.close(); } catch (_) {}
+            return { success: true, data: profile };
+
+            // await browser.close();
+            // return { success: true, data: profile };
+                // return { success: true, data: { message: "Browser left open for inspection." } };
+        } catch (err) {
+            try { if (page) await page.screenshot({ path: `linkedin-crawl-exception-${attempt}.png`, fullPage: true }); } catch (_) {}
+            if (browser) {
+                try { await browser.close(); } catch (_) {}
+            }
+            if (attempt < MAX_ATTEMPTS) {
+                await randomDelay(2000, 4000);
+                continue;
+            }
+            return { success: false, message: "Crawl failed: " + err.message };
+        }
+    }
+
+    return { success: false, message: "Crawl failed after retries." };
+}
+
+module.exports = { crawlLinkedInProfile };
+// ...existing code...
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+// javascript
+// filepath: c:\Users\srush\Projects\TheHireGenius\backend\src\workers\fetchLinkedinData.js
+require("dotenv").config();
+const { crawlLinkedInProfile } = require("./linkedInLoginCrawl.js");
+
+const MAX_RETRIES = parseInt(process.env.WORKER_MAX_RETRIES, 10) || 3;
+const MIN_DELAY = parseInt(process.env.WORKER_MIN_DELAY_MS, 10) || 2000;
+const MAX_DELAY = parseInt(process.env.WORKER_MAX_DELAY_MS, 10) || 5000;
+
+function randomDelay(min = MIN_DELAY, max = MAX_DELAY) {
+  const ms = Math.floor(Math.random() * (max - min + 1) + min);
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Worker-level wrapper: calls crawlLinkedInProfile and applies retry/backoff + inter-request delay.
+ * Returns structured profile data or throws on failure.
+ */
+async function fetchLinkedinData(linkedinUrl, attempt = 0) {
+  if (!linkedinUrl) return null;
+  try {
+    await randomDelay();
+    const result = await crawlLinkedInProfile(linkedinUrl);
+    if (!result || !result.success) {
+      throw new Error(result && result.message ? result.message : "LinkedIn crawler returned failure");
+    }
+    return result.data;
+  } catch (err) {
+    if (attempt < MAX_RETRIES) {
+      console.warn(`LinkedIn retry ${attempt + 1}/${MAX_RETRIES} for ${linkedinUrl}: ${err.message}`);
+      await randomDelay(3000 + attempt * 2000, 6000 + attempt * 2000);
+      return await fetchLinkedinData(linkedinUrl, attempt + 1);
+
+    }
+    throw new Error("LinkedIn fetch failed after retries: " + err.message);
+  }
+}
+
+module.exports = { fetchLinkedinData };

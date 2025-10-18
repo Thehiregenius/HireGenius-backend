@@ -12,6 +12,8 @@ const db = mongoose.connection;
 
 db.on('connected', () => {
   console.log('✅ Connected to MongoDB server');
+  console.log('mongoURL:', mongoURL);
+
 });
 
 db.on('error', (err) => {
