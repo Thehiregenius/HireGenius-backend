@@ -27,7 +27,8 @@
     "passport-google-oauth20": "^2.0.0",
     "puppeteer": "^24.24.1",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "user-agents": "^1.1.669"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
