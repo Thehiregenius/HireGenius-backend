@@ -38,8 +38,8 @@ const submitCrawlJob = async (req, res) => {
     // 2️⃣ Create a CrawlJob
     const crawlJob = new CrawlJob({
       studentProfileId: profile._id,
-      githubUrl,
-      linkedinUrl,
+      // githubUrl,
+      // linkedinUrl,
       status: "queued",
     });
     await crawlJob.save();
@@ -52,6 +52,7 @@ const submitCrawlJob = async (req, res) => {
       crawlJobId: crawlJob._id,
     });
 
+    // console.log("✅ student profile:", studentProfileId);
     return res.status(200).json({
       message: "Crawl job submitted successfully",
       crawlJobId: crawlJob._id,
@@ -63,5 +64,5 @@ const submitCrawlJob = async (req, res) => {
 };
 
 module.exports = {
-  submitCrawlJob,
+  submitCrawlJob
 };

@@ -3,6 +3,7 @@ const User = require("../models/User");
 const { generateToken } = require("../config/jwt");
 const { verifyGoogleToken } = require("../services/googleAuth");
 const { OAuth2Client } = require("google-auth-library");
+// const CrawlJob = require("../models/CrawlJob");
 const sendOTP = require("../utils/sendEmail");
 const bcrypt = require("bcryptjs");
 
@@ -67,7 +68,7 @@ const verifyOtp = async (req, res) => {
     const token = generateToken({ id: user._id, email: user.email, role: user.role });
         res
       .cookie("token", token, cookieOptions)
-      .json({ message: "Email verified successfully", user  });
+      .json({ message: "Email verified successfully", user, token  });
   } catch (err) {
     console.error("OTP verification error:", err.message);
     res.status(500).json({ error: "Server error during OTP verification" });

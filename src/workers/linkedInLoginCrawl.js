@@ -5,7 +5,7 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 puppeteer.use(StealthPlugin());
 
 const LOGIN_MAX_ATTEMPTS = parseInt(process.env.LINKEDIN_LOGIN_MAX_ATTEMPTS, 10) || 1; // login only once by default
-const CRAWL_MAX_ATTEMPTS = parseInt(process.env.LINKEDIN_CRAWL_MAX_ATTEMPTS, 10) || 3;
+const CRAWL_MAX_ATTEMPTS = parseInt(process.env.LINKEDIN_CRAWL_MAX_ATTEMPTS, 10) || 1;
 const MIN_DELAY = parseInt(process.env.LINKEDIN_MIN_DELAY_MS, 10) || 800;
 const MAX_DELAY = parseInt(process.env.LINKEDIN_MAX_DELAY_MS, 10) || 2000;
 
