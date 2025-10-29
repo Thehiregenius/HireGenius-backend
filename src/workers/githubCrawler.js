@@ -17,16 +17,18 @@ async function fetchGithubDataHybrid(url) {
       (repo) => !repo.description || repo.description.trim() === ""
     );
 
-    let scrapedData = null;
-    if (missingData || !apiData.bio) {
-      scrapedData = await scrapeGitHubProfile(username);
-    }
+    // let scrapedData = null;
+    // if (missingData || !apiData.bio) {
+    //   scrapedData = await scrapeGitHubProfile(username);
+    // }
 
     // Step 3️⃣ — Merge data
     const finalData = {
       username,
       name: apiData.name,
-      bio: scrapedData?.bio || apiData.bio,
+      // bio: scrapedData?.bio || apiData.bio,
+      
+      bio: apiData.bio,
       followers: apiData.followers,
       following: apiData.following,
       totalRepos: apiData.repos.length,
@@ -34,13 +36,13 @@ async function fetchGithubDataHybrid(url) {
         name: repo.name,
         description:
           repo.description ||
-          scrapedData?.pinnedRepos.find((p) => p.name === repo.name)?.description ||
+          // scrapedData?.pinnedRepos.find((p) => p.name === repo.name)?.description ||
           "N/A",
         language: repo.language,
         stars: repo.stargazers_count,
         url: repo.html_url,
       })),
-      pinnedRepos: scrapedData?.pinnedRepos || [],
+      // pinnedRepos: scrapedData?.pinnedRepos || [],
     };
 
     return finalData;
@@ -83,38 +85,38 @@ async function fetchGithubAPI(username) {
 }
 
 // Scrape pinned repos, bio, etc.
-async function scrapeGitHubProfile(username) {
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+// async function scrapeGitHubProfile(username) {
+//   let browser;
+//   try {
+//     browser = await puppeteer.launch({
+//       headless: true,
+//       args: ["--no-sandbox", "--disable-setuid-sandbox"],
+//     });
 
-    const page = await browser.newPage();
-    await page.goto(`https://github.com/${username}`, { waitUntil: "networkidle2" });
+//     const page = await browser.newPage();
+//     await page.goto(`https://github.com/${username}`, { waitUntil: "networkidle2" });
 
-    const scrapedData = await page.evaluate(() => {
-      const pinnedRepos = Array.from(document.querySelectorAll("li.pinned-item-list-item")).map((el) => ({
-        name: el.querySelector("span.repo")?.innerText || "",
-        description: el.querySelector("p.pinned-item-desc")?.innerText.trim() || "",
-        techStack: Array.from(el.querySelectorAll("span[itemprop='programmingLanguage']")).map((lang) => lang.innerText),
-      }));
+//     const scrapedData = await page.evaluate(() => {
+//       const pinnedRepos = Array.from(document.querySelectorAll("li.pinned-item-list-item")).map((el) => ({
+//         name: el.querySelector("span.repo")?.innerText || "",
+//         description: el.querySelector("p.pinned-item-desc")?.innerText.trim() || "",
+//         techStack: Array.from(el.querySelectorAll("span[itemprop='programmingLanguage']")).map((lang) => lang.innerText),
+//       }));
 
-      const bio =
-        document.querySelector("div.p-note")?.innerText.trim() ||
-        document.querySelector("div.user-profile-bio")?.innerText.trim() ||
-        null;
+//       const bio =
+//         document.querySelector("div.p-note")?.innerText.trim() ||
+//         document.querySelector("div.user-profile-bio")?.innerText.trim() ||
+//         null;
 
-      return { pinnedRepos, bio };
-    });
+//       return { pinnedRepos, bio };
+//     });
 
-    await browser.close();
-    return scrapedData;
-  } catch (err) {
-    if (browser) await browser.close();
-    throw new Error("GitHub Scraping Error: " + err.message);
-  }
-}
+//     await browser.close();
+//     return scrapedData;
+//   } catch (err) {
+//     if (browser) await browser.close();
+//     throw new Error("GitHub Scraping Error: " + err.message);
+//   }
+// }
 
 module.exports = { fetchGithubDataHybrid };

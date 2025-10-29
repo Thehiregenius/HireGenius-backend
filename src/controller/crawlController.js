@@ -1,21 +1,17 @@
 const StudentProfile = require("../models/StudentProfile");
 const CrawlJob = require("../models/CrawlJob");
-const crawlQueue = require("../utils/bull");
+const { githubQueue, linkedinQueue } = require("../utils/bull");
 
 // POST /api/crawl
 const submitCrawlJob = async (req, res) => {
   try {
     const { githubUrl, linkedinUrl } = req.body;
-    // const { githubUrl } = req.body;
     const userId = req.user.id; // assuming you have auth middleware
 
-    if (!githubUrl || !linkedinUrl) {
-      return res.status(400).json({ message: "Both URLs are required" });
+    if (!githubUrl && !linkedinUrl) {
+      return res.status(400).json({ message: "At least one URL is required" });
     }
-    // if (!githubUrl) {
-    //   return res.status(400).json({ message: "GitHub URL is required" });
-    // }
-    
+
     // 1️⃣ Find or create StudentProfile
     let profile = await StudentProfile.findOne({ userId });
 
@@ -25,44 +21,59 @@ const submitCrawlJob = async (req, res) => {
         githubUrl,
         linkedinUrl,
         rawData: { github: {}, linkedin: {} },
-        // rawData: { github: {} },
       });
       await profile.save();
     } else {
-      // Update URLs if already exists
+      // Update URLs if profile already exists
       profile.githubUrl = githubUrl;
       profile.linkedinUrl = linkedinUrl;
       await profile.save();
     }
 
-    // 2️⃣ Create a CrawlJob
-    const crawlJob = new CrawlJob({
-      studentProfileId: profile._id,
-      // githubUrl,
-      // linkedinUrl,
-      status: "queued",
-    });
-    await crawlJob.save();
+    // 2️⃣ Create separate jobs for each source
+    const jobs = [];
 
-    // 3️⃣ Add job to Bull queue
-    await crawlQueue.add({
-      studentProfileId: profile._id,
-      githubUrl,
-      linkedinUrl,
-      crawlJobId: crawlJob._id,
-    });
+    if (githubUrl) {
+      const githubJob = await CrawlJob.create({
+        studentProfileId: profile._id,
+        githubUrl,
+        status: "queued",
+      });
 
-    // console.log("✅ student profile:", studentProfileId);
+      await githubQueue.add({
+        studentProfileId: profile._id,
+        githubUrl,
+        crawlJobId: githubJob._id,
+      });
+
+      jobs.push({ type: "github", id: githubJob._id });
+    }
+
+    if (linkedinUrl) {
+      const linkedinJob = await CrawlJob.create({
+        studentProfileId: profile._id,
+        linkedinUrl,
+        status: "queued",
+      });
+
+      await linkedinQueue.add({
+        studentProfileId: profile._id,
+        linkedinUrl,
+        crawlJobId: linkedinJob._id,
+      });
+
+      jobs.push({ type: "linkedin", id: linkedinJob._id });
+    }
+
+    // ✅ Respond with all created job IDs
     return res.status(200).json({
-      message: "Crawl job submitted successfully",
-      crawlJobId: crawlJob._id,
+      message: "Crawl job(s) submitted successfully",
+      jobs,
     });
   } catch (err) {
     console.error("❌ submitCrawlJob error:", err);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: err.message || "Internal server error" });
   }
 };
 
-module.exports = {
-  submitCrawlJob
-};
+module.exports = { submitCrawlJob };
