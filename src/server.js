@@ -7,6 +7,7 @@ const cookieParser = require("cookie-parser");
 const db = require('./config/db'); // if you have one
 const authRoutes = require('./routes/auth');
 const crawlRoutes = require('./routes/crawl');
+const profileRoutes = require('./routes/profile');
 
 
 // Middleware
@@ -22,10 +23,14 @@ app.use(
     credentials: true, // allow cookies to be sent
   })
 );
+console.log('authRoutes type:', typeof authRoutes, 'isRouter:', !!(authRoutes && authRoutes.stack));
+console.log('crawlRoutes type:', typeof crawlRoutes, 'isRouter:', !!(crawlRoutes && crawlRoutes.stack));
+console.log('profileRoutes type:', typeof profileRoutes, 'isRouter:', !!(profileRoutes && profileRoutes.stack));
 
 // Routes
 app.use("/", authRoutes);
 app.use("/", crawlRoutes);
+app.use("/", profileRoutes);
 
 // Test route
 app.get("/", (req, res) => {

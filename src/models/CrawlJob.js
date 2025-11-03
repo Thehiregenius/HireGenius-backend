@@ -7,8 +7,8 @@ const crawlJobSchema = new mongoose.Schema(
       ref: "StudentProfile",
       required: true,
     },
-    // githubUrl: { type: String, required: true },
-    // linkedinUrl: { type: String, required: true },
+    githubUrl: { type: String, required: true },
+    linkedinUrl: { type: String, required: true },
     status: {
       type: String,
       enum: ["queued", "processing", "completed", "failed"],
