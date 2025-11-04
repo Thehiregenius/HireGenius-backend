@@ -16,30 +16,6 @@ function randomDelay(min = MIN_DELAY, max = MAX_DELAY) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Worker-level wrapper: calls crawlLinkedInProfile and applies retry/backoff + inter-request delay.
- * Returns structured profile data or throws on failure.
- */
-// async function fetchLinkedinData(linkedinUrl, attempt = 0) {
-//   if (!linkedinUrl) return null;
-//   try {
-//     await randomDelay();
-//     const result = await crawlLinkedInProfile(linkedinUrl);
-//     if (!result || !result.success) {
-//       throw new Error(result && result.message ? result.message : "LinkedIn crawler returned failure");
-//     }
-//     return result.data;
-//   } catch (err) {
-//     if (attempt < MAX_RETRIES) {
-//       console.warn(`LinkedIn retry ${attempt + 1}/${MAX_RETRIES} for ${linkedinUrl}: ${err.message}`);
-//       await randomDelay(3000 + attempt * 2000, 6000 + attempt * 2000);
-//       return await fetchLinkedinData(linkedinUrl, attempt + 1);
-
-//     }
-//     throw new Error("LinkedIn fetch failed after retries: " + err.message);
-//   }
-// }
-// ...existing code...
 async function fetchLinkedinData(linkedinUrl, attempt = 0) {
   if (!linkedinUrl) return null;
 
@@ -125,5 +101,4 @@ async function fetchLinkedinData(linkedinUrl, attempt = 0) {
     );
   }
 }
-// ...existing code...
 module.exports = { fetchLinkedinData };

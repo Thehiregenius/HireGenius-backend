@@ -1,7 +1,7 @@
 const User = require('../models/User');
 const StudentProfile = require('../models/StudentProfile');
 const CrawlJob = require('../models/CrawlJob');
-const { crawlQueue } = require('../utils/bull');
+const { githubQueue, linkedinQueue } = require('../utils/bull');
 
 /**
  * GET /api/profile
@@ -84,22 +84,37 @@ const updateProfile = async (req, res) => {
       await studentProfile.save();
     }
 
-    // ENQUEUE CRAWL JOB (start crawler automatically when urls provided/updated)
-    if ((githubUrl && githubUrl.trim()) || (linkedinUrl && linkedinUrl.trim())) {
+    // ENQUEUE CRAWL JOB (start crawler automatically when valid urls provided)
+    const trimmedGithubUrl = githubUrl?.trim() || '';
+    const trimmedLinkedinUrl = linkedinUrl?.trim() || '';
+    
+    // Only create one crawl job if at least one valid URL exists
+    if (trimmedGithubUrl || trimmedLinkedinUrl) {
       const crawlJob = await CrawlJob.create({
         studentProfileId: studentProfile._id,
-        githubUrl: githubUrl && githubUrl.trim() ? githubUrl.trim() : null,
-        linkedinUrl: linkedinUrl && linkedinUrl.trim() ? linkedinUrl.trim() : null,
+        githubUrl: trimmedGithubUrl || null,
+        linkedinUrl: trimmedLinkedinUrl || null,
         status: 'queued',
         errorMessages: []
       });
 
-      await crawlQueue.add({
-        studentProfileId: studentProfile._id.toString(),
-        githubUrl: githubUrl && githubUrl.trim() ? githubUrl.trim() : null,
-        linkedinUrl: linkedinUrl && linkedinUrl.trim() ? linkedinUrl.trim() : null,
-        crawlJobId: crawlJob._id.toString()
-      });
+      // Only add to GitHub queue if GitHub URL exists
+      if (trimmedGithubUrl) {
+        await githubQueue.add({
+          studentProfileId: studentProfile._id.toString(),
+          githubUrl: trimmedGithubUrl,
+          crawlJobId: crawlJob._id.toString()
+        });
+      }
+
+      // Only add to LinkedIn queue if LinkedIn URL exists
+      if (trimmedLinkedinUrl) {
+        await linkedinQueue.add({
+          studentProfileId: studentProfile._id.toString(),
+          linkedinUrl: trimmedLinkedinUrl,
+          crawlJobId: crawlJob._id.toString()
+        });
+      }
     }
 
     return res.json({
@@ -113,7 +128,6 @@ const updateProfile = async (req, res) => {
         linkedinUrl: studentProfile.linkedinUrl
       }
     });
-// ...existing code...
 
   } catch (err) {
     console.error('updateProfile error', err);
