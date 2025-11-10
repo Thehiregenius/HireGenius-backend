@@ -59,12 +59,14 @@ const updateProfile = async (req, res) => {
     // Update User (name / avatar)
     const userUpdates = {};
     if (name) userUpdates.name = String(name).trim();
+    
     // if file uploaded, construct public URL (served from /uploads)
     if (req.file) {
       const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
       userUpdates.avatar = avatarUrl;
-    } else if (avatarFromBody) {
-      userUpdates.avatar = String(avatarFromBody).trim();
+    } else if (typeof avatarFromBody !== 'undefined') {
+      // Allow explicit avatar update from request body (including empty string to remove)
+      userUpdates.avatar = avatarFromBody ? String(avatarFromBody).trim() : null;
     }
 
     let updatedUser = null;
