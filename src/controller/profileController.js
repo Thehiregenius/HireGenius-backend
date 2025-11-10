@@ -48,7 +48,8 @@ const updateProfile = async (req, res) => {
     const userId = req.user && req.user.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { name, avatar, githubUrl, linkedinUrl } = req.body;
+    // for multipart/form-data, fields are in req.body and uploaded file in req.file
+    const { name, avatar: avatarFromBody, githubUrl, linkedinUrl } = req.body;
 
     // Basic validation
     if (name && String(name).trim().length < 2) return res.status(400).json({ error: 'Name too short' });
@@ -58,7 +59,13 @@ const updateProfile = async (req, res) => {
     // Update User (name / avatar)
     const userUpdates = {};
     if (name) userUpdates.name = String(name).trim();
-    if (avatar) userUpdates.avatar = String(avatar).trim();
+    // if file uploaded, construct public URL (served from /uploads)
+    if (req.file) {
+      const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+      userUpdates.avatar = avatarUrl;
+    } else if (avatarFromBody) {
+      userUpdates.avatar = String(avatarFromBody).trim();
+    }
 
     let updatedUser = null;
     if (Object.keys(userUpdates).length) {
