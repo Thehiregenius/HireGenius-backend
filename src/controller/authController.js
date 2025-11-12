@@ -156,4 +156,19 @@ const googleLogin = async (req, res) => {
 };
 
 
-module.exports = { signup, login, googleSignup, googleLogin, verifyOtp };
+// ------------------ LOGOUT ------------------
+const logout = async (req, res) => {
+  try {
+    // Clear the httpOnly auth cookie
+    // Use the same cookie name and options as login, but expire immediately
+    res
+      .cookie("token", "", { ...cookieOptions, expires: new Date(0), maxAge: 0 })
+      .status(200)
+      .json({ message: "Logged out" });
+  } catch (err) {
+    console.error("Logout error:", err.message);
+    res.status(500).json({ error: "Server error during logout" });
+  }
+};
+
+module.exports = { signup, login, googleSignup, googleLogin, verifyOtp, logout };
