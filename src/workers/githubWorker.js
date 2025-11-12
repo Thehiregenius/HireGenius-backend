@@ -1,4 +1,4 @@
-const {githubQueue} = require("../utils/bull.js"); // separate queue file
+const {githubQueue, portfolioQueue} = require("../utils/bull.js"); // separate queue file
 const StudentProfile = require("../models/StudentProfile");
 const CrawlJob = require("../models/CrawlJob");
 require("../config/db");
@@ -49,6 +49,15 @@ githubQueue.process(async (job) => {
     });
 
     console.log(`[GitHub Worker] Job ${crawlJobId} completed (${finalStatus})`);
+
+    // Trigger portfolio generation if both GitHub and LinkedIn data exist
+    if (updatedProfile.rawData?.github && updatedProfile.rawData?.linkedin) {
+      console.log(`[GitHub Worker] Both GitHub and LinkedIn data available. Triggering portfolio generation for user ${updatedProfile.userId}`);
+      await portfolioQueue.add({
+        userId: updatedProfile.userId,
+      });
+    }
+
     return updatedProfile;
   } catch (err) {
     console.error(`[GitHub Worker] Job ${crawlJobId} failed:`, err);

@@ -211,37 +211,21 @@ async function loginOnce() {
     throw new Error("Missing LINKEDIN_EMAIL or LINKEDIN_PASSWORD in .env");
 
   let lastErr = null;
-
-  for (let attempt = 1; attempt <= LOGIN_MAX_ATTEMPTS; attempt++) {
+  const maxRetries = parseInt(process.env.LINKEDIN_LOGIN_MAX_RETRIES, 10) || 2;
+  for (let retry = 0; retry < maxRetries; retry++) {
     let browser, page;
     try {
       ({ browser, page } = await launchBrowser());
-
-      // Random initial delay to simulate page load
       await randomDelay(2000, 4000);
-
-      // First go to homepage, then to login page like a real user
-      await page.goto("https://www.linkedin.com", {
-        waitUntil: "networkidle2",
-      });
+      await page.goto("https://www.linkedin.com", { waitUntil: "networkidle2" });
       await randomDelay(1000, 2000);
-
-      await page.goto("https://www.linkedin.com/login", {
-        waitUntil: "networkidle2",
-      });
+      await page.goto("https://www.linkedin.com/login", { waitUntil: "networkidle2" });
       await randomDelay(1500, 3000);
-
-      // Human-like typing for credentials
       await humanLikeType(page, "#username", email);
       await randomDelay(1000, 2000);
-
       await humanLikeType(page, "#password", password);
       await randomDelay(1000, 2000);
-
-      // Add random mouse movements before clicking
       await randomMouseMovements(page);
-
-      // Click the submit button with human-like behavior
       await page.evaluate(() => {
         const button = document.querySelector('button[type="submit"]');
         const rect = button.getBoundingClientRect();
@@ -254,47 +238,32 @@ async function loginOnce() {
         });
         button.dispatchEvent(event);
       });
-
-      // Wait for successful login
       await Promise.race([
         page.waitForNavigation({ waitUntil: "networkidle2" }),
         page.waitForSelector('input[role="combobox"]'),
       ]);
-
-      // Add random scroll and delay after login
       await randomScroll(page);
       await randomDelay(3000, 5000);
-
-      // Verify successful login
       const url = page.url();
       if (url.includes("/login") || url.includes("/checkpoint")) {
         throw new Error(`Login failed - redirected to ${url}`);
       }
-
       console.log("Login successful!");
       SESSION = { browser, page, createdAt: Date.now() };
       return SESSION;
     } catch (err) {
       lastErr = err;
-      console.error(`Login attempt ${attempt} failed:`, err.message);
-
+      console.error(`Login retry ${retry + 1} failed:`, err.message);
       if (page) {
-        await page.screenshot({ path: `login-error-${attempt}.png` });
+        await page.screenshot({ path: `login-error-retry-${retry + 1}.png` });
       }
       if (browser) {
         await browser.close();
       }
-
-      if (attempt < LOGIN_MAX_ATTEMPTS) {
-        const delayMs = Math.pow(2, attempt) * 1000;
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
+      await randomDelay(2000 + retry * 1000, 4000 + retry * 1000);
     }
   }
-
-  throw new Error(
-    `Failed to login after ${LOGIN_MAX_ATTEMPTS} attempts. Last error: ${lastErr.message}`
-  );
+  throw new Error(`Failed to login after ${maxRetries} retries. Last error: ${lastErr && lastErr.message}`);
 }
 
 /**
@@ -310,251 +279,106 @@ async function crawlLinkedInProfile(profileUrl) {
   const session = await loginOnce();
   const page = session.page;
 
-  for (let attempt = 1; attempt <= CRAWL_MAX_ATTEMPTS; attempt++) {
+  const maxRetries = parseInt(process.env.LINKEDIN_CRAWL_MAX_RETRIES, 10) || 3;
+  for (let retry = 0; retry < maxRetries; retry++) {
     try {
       if (page.isClosed()) throw new Error("Session page is closed");
-
-      // Add initial random delay before navigation
       await randomDelay(2000, 4000);
-
-      // Navigate to profile following the Python crawler approach: try a navigation,
-      // then attempt several refreshes while waiting for the top-card selector.
-      await page
-        .goto(profileUrl, { waitUntil: "domcontentloaded", timeout: 120000 })
-        .catch(() => {});
-      // small human-like pause after navigation
+      await page.goto(profileUrl, { waitUntil: "domcontentloaded", timeout: 120000 }).catch(() => {});
       await randomDelay(2000, 4000);
-
-      // Try waiting for the main profile selectors; refresh up to 2 times if not found
       let topFound = false;
       for (let i = 0; i < 3; i++) {
         try {
-          await page.waitForSelector("h1, .pv-top-card, .text-heading-xlarge", {
-            timeout: 30000,
-          });
+          await page.waitForSelector("h1, .pv-top-card, .text-heading-xlarge", { timeout: 30000 });
           topFound = true;
           break;
         } catch (waitErr) {
-          console.warn(
-            `Top-card not found (attempt ${i + 1}/3): ${waitErr.message}`
-          );
-          // try a soft reload like a human navigating
+          console.warn(`Top-card not found (attempt ${i + 1}/3): ${waitErr.message}`);
           try {
-            await page.reload({
-              waitUntil: "domcontentloaded",
-              timeout: 120000,
-            });
+            await page.reload({ waitUntil: "domcontentloaded", timeout: 120000 });
           } catch (reloadErr) {
             console.warn(`Reload ${i + 1} failed: ${reloadErr.message}`);
           }
-          // progressively longer pause between attempts
           await randomDelay(2000 + i * 1000, 3500 + i * 1000);
         }
       }
-
       const currentUrl = page.url();
-      if (
-        currentUrl.includes("checkpoint") ||
-        currentUrl.includes("authwall")
-      ) {
+      if (currentUrl.includes("checkpoint") || currentUrl.includes("authwall")) {
         throw new Error("Hit LinkedIn verification page");
       }
-
       if (!topFound) {
-        console.warn(
-          "Top-card selectors not found after retries; proceeding but results may be incomplete."
-        );
+        console.warn("Top-card selectors not found after retries; proceeding but results may be incomplete.");
       }
-
-      // Add human-like activity after load
       await randomScroll(page);
       await randomDelay(1500, 3000);
       await randomMouseMovements(page);
-
-      // ensure top card/h1 rendered
-      await page
-        .waitForSelector("h1, .pv-top-card, .text-heading-xlarge", {
-          timeout: 30000,
-        })
-        .catch(() => null);
+      await page.waitForSelector("h1, .pv-top-card, .text-heading-xlarge", { timeout: 30000 }).catch(() => null);
       await randomDelay();
-
-      // attempt to open contact modal (best-effort)
       try {
-        const contactBtn = await page.$(
-          'a[data-control-name="contact_see_more"], button[data-control-name="contact_see_more"], .pv-top-card__contact-info'
-        );
+        const contactBtn = await page.$('a[data-control-name="contact_see_more"], button[data-control-name="contact_see_more"], .pv-top-card__contact-info');
         if (contactBtn) {
           await contactBtn.click().catch(() => null);
           await page.waitForTimeout(800).catch(() => null);
         }
       } catch (_) {}
-
-      // guarded evaluation inside page
       const evalResult = await page.evaluate(() => {
         try {
-          const pickText = (sel, root = document) =>
-            root.querySelector(sel)?.innerText?.trim() || null;
-
-          const name =
-            pickText('h1[class*="break-words"], h1, .text-heading-xlarge') ||
-            "";
-          const headline =
-            pickText(
-              ".text-body-medium.break-words, .pv-top-card--list .text-body-medium, .pv-top-card__occupation"
-            ) || "";
-          const location =
-            pickText(
-              ".pv-top-card--list-bullet, .pv-top-card__location, .t-16.t-black--light"
-            ) || "";
-          const about =
-            pickText(
-              "#about .pv-about__summary-text, #about .lt-line-clamp__raw-line, .pv-about__summary-text"
-            ) || "";
-
-          const skills = Array.from(
-            document.querySelectorAll(
-              ".pv-skill-category-entity__name, .skill-pill, .pv-skill-entity__skill-name"
-            )
-          )
-            .map((n) => n.innerText && n.innerText.trim())
-            .filter(Boolean);
-
-          const education = Array.from(
-            document.querySelectorAll(
-              "#education .pv-education-entity, .pv-education-entity, .education-section li"
-            )
-          ).map((el) => ({
-            school:
-              el.querySelector("h3")?.innerText?.trim() ||
-              el.querySelector(".pv-entity__school-name")?.innerText?.trim() ||
-              "",
-            degree:
-              el.querySelector(".pv-entity__degree-name")?.innerText?.trim() ||
-              "",
-            period:
-              el.querySelector(".pv-entity__dates")?.innerText?.trim() || "",
+          const pickText = (sel, root = document) => root.querySelector(sel)?.innerText?.trim() || null;
+          const name = pickText('h1[class*="break-words"], h1, .text-heading-xlarge') || "";
+          const headline = pickText(".text-body-medium.break-words, .pv-top-card--list .text-body-medium, .pv-top-card__occupation") || "";
+          const location = pickText(".pv-top-card--list-bullet, .pv-top-card__location, .t-16.t-black--light") || "";
+          const about = pickText("#about .pv-about__summary-text, #about .lt-line-clamp__raw-line, .pv-about__summary-text") || "";
+          const skills = Array.from(document.querySelectorAll(".pv-skill-category-entity__name, .skill-pill, .pv-skill-entity__skill-name")).map((n) => n.innerText && n.innerText.trim()).filter(Boolean);
+          const education = Array.from(document.querySelectorAll("#education .pv-education-entity, .pv-education-entity, .education-section li")).map((el) => ({
+            school: el.querySelector("h3")?.innerText?.trim() || el.querySelector(".pv-entity__school-name")?.innerText?.trim() || "",
+            degree: el.querySelector(".pv-entity__degree-name")?.innerText?.trim() || "",
+            period: el.querySelector(".pv-entity__dates")?.innerText?.trim() || "",
           }));
-
-          const experiences = Array.from(
-            document.querySelectorAll(
-              ".experience-section .pv-entity__position-group-pager li, .pv-position-entity, .pv-entity__position-group-item, .pv-profile-section__card-item"
-            )
-          ).map((el) => ({
-            title:
-              el.querySelector("h3")?.innerText?.trim() ||
-              el.querySelector(".t-bold")?.innerText?.trim() ||
-              "",
-            company:
-              el
-                .querySelector(".pv-entity__secondary-title")
-                ?.innerText?.trim() ||
-              el.querySelector(".pv-entity__company-name")?.innerText?.trim() ||
-              "",
-            period:
-              el
-                .querySelector(".pv-entity__date-range span:nth-child(2)")
-                ?.innerText?.trim() || "",
-            description:
-              el
-                .querySelector(".pv-entity__description, .pv-entity__summary")
-                ?.innerText?.trim() || "",
+          const experiences = Array.from(document.querySelectorAll(".experience-section .pv-entity__position-group-pager li, .pv-position-entity, .pv-entity__position-group-item, .pv-profile-section__card-item")).map((el) => ({
+            title: el.querySelector("h3")?.innerText?.trim() || el.querySelector(".t-bold")?.innerText?.trim() || "",
+            company: el.querySelector(".pv-entity__secondary-title")?.innerText?.trim() || el.querySelector(".pv-entity__company-name")?.innerText?.trim() || "",
+            period: el.querySelector(".pv-entity__date-range span:nth-child(2)")?.innerText?.trim() || "",
+            description: el.querySelector(".pv-entity__description, .pv-entity__summary")?.innerText?.trim() || "",
           }));
-
-          // try reading contact info visible in modal (best-effort)
-          const contactModal = document.querySelector(
-            ".pv-contact-info__contact-type"
-          );
+          const contactModal = document.querySelector(".pv-contact-info__contact-type");
           const contact = {};
           if (contactModal) {
-            contact.email =
-              contactModal.querySelector(".ci-email a")?.innerText?.trim() ||
-              null;
-            contact.phone =
-              contactModal.querySelector(".ci-phone span")?.innerText?.trim() ||
-              null;
-            contact.website =
-              contactModal.querySelector(".ci-websites a")?.innerText?.trim() ||
-              null;
+            contact.email = contactModal.querySelector(".ci-email a")?.innerText?.trim() || null;
+            contact.phone = contactModal.querySelector(".ci-phone span")?.innerText?.trim() || null;
+            contact.website = contactModal.querySelector(".ci-websites a")?.innerText?.trim() || null;
           } else {
-            contact.email =
-              document.querySelector(".ci-email a")?.innerText?.trim() || null;
-            contact.phone =
-              document.querySelector(".ci-phone span")?.innerText?.trim() ||
-              null;
+            contact.email = document.querySelector(".ci-email a")?.innerText?.trim() || null;
+            contact.phone = document.querySelector(".ci-phone span")?.innerText?.trim() || null;
           }
-
-          return {
-            ok: true,
-            data: {
-              name,
-              headline,
-              location,
-              about,
-              skills,
-              education,
-              experiences,
-              contact,
-            },
-          };
+          return { ok: true, data: { name, headline, location, about, skills, education, experiences, contact } };
         } catch (e) {
           return { ok: false, error: e && e.message ? e.message : String(e) };
         }
       });
-
       if (!evalResult || !evalResult.ok) {
         try {
-          await page.screenshot({
-            path: `linkedin-eval-error-attempt-${attempt}.png`,
-            fullPage: true,
-          });
+          await page.screenshot({ path: `linkedin-eval-error-retry-${retry + 1}.png`, fullPage: true });
         } catch (_) {}
-        throw new Error(
-          "Profile evaluation failed: " + (evalResult && evalResult.error)
-        );
+        throw new Error("Profile evaluation failed: " + (evalResult && evalResult.error));
       }
-
       const profile = evalResult.data;
-
       try {
-        await page.screenshot({
-          path: `linkedin-crawl-success-${Date.now()}.png`,
-          fullPage: true,
-        });
+        await page.screenshot({ path: `linkedin-crawl-success-${Date.now()}.png`, fullPage: true });
       } catch (_) {}
-
-      // optional: keep browser open for debugging
       if (process.env.KEEP_BROWSER_OPEN === "1") {
-        console.log(
-          "KEEP_BROWSER_OPEN=1 — session remains open for inspection."
-        );
+        console.log("KEEP_BROWSER_OPEN=1 — session remains open for inspection.");
         return { success: true, data: profile };
       }
-
-      // do NOT close browser here; keep session for reuse. If you want to close, use closeSession().
       return { success: true, data: profile };
     } catch (err) {
-      // transient error during crawl; retry without re-login
       try {
-        await session.page.screenshot({
-          path: `linkedin-crawl-exception-${attempt}.png`,
-          fullPage: true,
-        });
+        await session.page.screenshot({ path: `linkedin-crawl-exception-retry-${retry + 1}.png`, fullPage: true });
       } catch (_) {}
-      if (attempt < CRAWL_MAX_ATTEMPTS) {
-        console.warn(
-          `Crawl attempt ${attempt} failed: ${err.message}. Retrying...`
-        );
-        await randomDelay(1500 + attempt * 1000, 3000 + attempt * 1000);
-        continue;
-      }
-      // final failure
-      throw new Error("Crawl failed after attempts: " + err.message);
+      console.warn(`Crawl retry ${retry + 1} failed: ${err.message}. Retrying...`);
+      await randomDelay(1500 + retry * 1000, 3000 + retry * 1000);
     }
   }
-
-  // unreachable
-  throw new Error("Crawl failed - loop exit");
+  throw new Error("Crawl failed after retries.");
 }
 
 /** Close cached session/browser (call from worker shutdown or tests) */

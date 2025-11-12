@@ -7,6 +7,8 @@ const {
   closeSession,
 } = require("./linkedInLoginCrawl.js");
 
+// Note: Retries are handled inside crawlLinkedInProfile (LINKEDIN_CRAWL_MAX_RETRIES)
+// Keep this for logging if needed, but wrapper no longer retries.
 const MAX_RETRIES = parseInt(process.env.WORKER_MAX_RETRIES, 10) || 3;
 const MIN_DELAY = parseInt(process.env.WORKER_MIN_DELAY_MS, 10) || 2000;
 const MAX_DELAY = parseInt(process.env.WORKER_MAX_DELAY_MS, 10) || 5000;
@@ -16,7 +18,7 @@ function randomDelay(min = MIN_DELAY, max = MAX_DELAY) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchLinkedinData(linkedinUrl, attempt = 0) {
+async function fetchLinkedinData(linkedinUrl) {
   if (!linkedinUrl) return null;
 
   // normalize simple linkedin urls
@@ -31,11 +33,9 @@ async function fetchLinkedinData(linkedinUrl, attempt = 0) {
   try {
     await randomDelay();
 
-    // call crawler with timeout
+    // call crawler with timeout (retries happen inside crawl function)
     console.log(
-      `[LinkedIn Crawler] Attempting to fetch ${linkedinUrl} (attempt ${
-        attempt + 1
-      }/${MAX_RETRIES + 1})`
+      `[LinkedIn Crawler] Fetching ${linkedinUrl}`
     );
     const crawlerPromise = crawlLinkedInProfile(linkedinUrl);
     const timeoutPromise = new Promise((_, rej) =>
@@ -84,21 +84,8 @@ async function fetchLinkedinData(linkedinUrl, attempt = 0) {
     return result.data;
   } catch (err) {
     console.error(`[LinkedIn Crawler] Error:`, err.message);
-
-    if (attempt < MAX_RETRIES) {
-      const backoffMin = 3000 + attempt * 2000;
-      const backoffMax = 6000 + attempt * 2000;
-      console.warn(
-        `[LinkedIn Crawler] Retry ${
-          attempt + 1
-        }/${MAX_RETRIES} for ${linkedinUrl}`
-      );
-      await randomDelay(backoffMin, backoffMax);
-      return fetchLinkedinData(linkedinUrl, attempt + 1);
-    }
-    throw new Error(
-      `LinkedIn fetch failed after ${MAX_RETRIES} retries: ${err.message}`
-    );
+    // No wrapper retries; propagate error
+    throw err;
   }
 }
 module.exports = { fetchLinkedinData };

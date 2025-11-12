@@ -8,6 +8,7 @@ const db = require('./config/db'); // if you have one
 const authRoutes = require('./routes/auth');
 const crawlRoutes = require('./routes/crawl');
 const profileRoutes = require('./routes/profile');
+const portfolioRoutes = require('./routes/portfolio');
 const path = require("path");
 
 
@@ -29,6 +30,7 @@ app.use(
 app.use("/", authRoutes);
 app.use("/", crawlRoutes);
 app.use("/", profileRoutes);
+app.use("/portfolio", portfolioRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Test route

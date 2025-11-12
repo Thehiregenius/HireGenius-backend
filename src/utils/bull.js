@@ -10,6 +10,7 @@ const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 // const crawlQueue = new Queue("crawlQueue", REDIS_URL);
 const githubQueue = new Queue("githubQueue", REDIS_URL);
 const linkedinQueue = new Queue("linkedinQueue", REDIS_URL);
+const portfolioQueue = new Queue("portfolioQueue", REDIS_URL);
 
 // Optional: basic event listeners for debugging
 const addListeners = (queue, name) => {
@@ -22,5 +23,6 @@ const addListeners = (queue, name) => {
 
 addListeners(githubQueue, "GitHub");
 addListeners(linkedinQueue, "LinkedIn");
+addListeners(portfolioQueue, "Portfolio");
 
-module.exports = {githubQueue, linkedinQueue};
+module.exports = {githubQueue, linkedinQueue, portfolioQueue};
