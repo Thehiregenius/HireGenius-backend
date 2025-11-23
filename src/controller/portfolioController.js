@@ -182,7 +182,7 @@ const generatePortfolio = async (req, res) => {
  */
 async function generateBioWithGemini(portfolioData, githubData, linkedinData) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `
 You are a professional portfolio writer. Based on the following information about a student developer, write a concise, engaging professional bio (2-3 sentences, max 150 words).

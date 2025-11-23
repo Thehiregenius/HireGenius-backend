@@ -11,6 +11,9 @@ const studentProfileSchema = new mongoose.Schema(
     // a minimal StudentProfile record without failing validation.
     githubUrl: { type: String, default: "" },
     linkedinUrl: { type: String, default: "" },
+    // Processing coordination flags
+    githubProcessed: { type: Boolean, default: false },
+    linkedinProcessed: { type: Boolean, default: false },
     rawData: {
       github: { type: Object, default: {} },
       linkedin: { type: Object, default: {} },

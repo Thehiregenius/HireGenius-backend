@@ -1,9 +1,11 @@
-const {githubQueue, portfolioQueue} = require("../utils/bull.js"); // separate queue file
+const {githubQueue} = require("../utils/bull.js"); // separate queue file
 const StudentProfile = require("../models/StudentProfile");
 const CrawlJob = require("../models/CrawlJob");
 require("../config/db");
 
+
 const { fetchGithubDataHybrid } = require("./githubCrawler");
+const { coordinatePortfolioGeneration } = require("../utils/triggerPortfolio");
 
 githubQueue.process(async (job) => {
   const { studentProfileId, githubUrl, crawlJobId } = job.data;
@@ -30,18 +32,23 @@ githubQueue.process(async (job) => {
       errors.push(`GitHub Error: ${error.message}`);
     }
 
-    if (!githubData) throw new Error("No data collected from GitHub");
+    // Update profile with whatever data we have (or empty) and mark as processed
+    const updateData = {
+      githubProcessed: true,
+      lastUpdated: new Date(),
+    };
+    
+    if (githubData) {
+      updateData["rawData.github"] = githubData;
+    }
 
     const updatedProfile = await StudentProfile.findByIdAndUpdate(
       studentProfileId,
-      {
-        "rawData.github": githubData,
-        lastUpdated: new Date(),
-      },
+      updateData,
       { new: true }
     );
 
-    const finalStatus = errors.length > 0 ? "partial" : "completed";
+    const finalStatus = githubData ? (errors.length > 0 ? "partial" : "completed") : "failed";
     await CrawlJob.findByIdAndUpdate(crawlJobId, {
       status: finalStatus,
       completionTime: new Date(),
@@ -50,13 +57,10 @@ githubQueue.process(async (job) => {
 
     console.log(`[GitHub Worker] Job ${crawlJobId} completed (${finalStatus})`);
 
-    // Trigger portfolio generation if both GitHub and LinkedIn data exist
-    if (updatedProfile.rawData?.github && updatedProfile.rawData?.linkedin) {
-      console.log(`[GitHub Worker] Both GitHub and LinkedIn data available. Triggering portfolio generation for user ${updatedProfile.userId}`);
-      await portfolioQueue.add({
-        userId: updatedProfile.userId,
-      });
-    }
+
+    // Coordinate portfolio generation after both crawlers processed
+    const coordResult = await coordinatePortfolioGeneration(updatedProfile.userId);
+    console.log(`[GitHub Worker] Coordination result for user ${updatedProfile.userId}: ${coordResult}`);
 
     return updatedProfile;
   } catch (err) {

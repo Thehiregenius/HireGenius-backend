@@ -4,6 +4,7 @@ const CrawlJob = require("../models/CrawlJob");
 require("../config/db");
 
 const { fetchLinkedinData } = require("./linkedInCrawler");
+const { coordinatePortfolioGeneration } = require("../utils/triggerPortfolio");
 
 linkedinQueue.process(async (job) => {
   const { studentProfileId, linkedinUrl, crawlJobId } = job.data;
@@ -30,18 +31,23 @@ linkedinQueue.process(async (job) => {
       errors.push(`LinkedIn Error: ${error.message}`);
     }
 
-    if (!linkedinData) throw new Error("No data collected from LinkedIn");
+    // Update profile with whatever data we have (or empty) and mark as processed
+    const updateData = {
+      linkedinProcessed: true,
+      lastUpdated: new Date(),
+    };
+    
+    if (linkedinData) {
+      updateData["rawData.linkedin"] = linkedinData;
+    }
 
     const updatedProfile = await StudentProfile.findByIdAndUpdate(
       studentProfileId,
-      {
-        "rawData.linkedin": linkedinData,
-        lastUpdated: new Date(),
-      },
+      updateData,
       { new: true }
     );
 
-    const finalStatus = errors.length > 0 ? "partial" : "completed";
+    const finalStatus = linkedinData ? (errors.length > 0 ? "partial" : "completed") : "failed";
     await CrawlJob.findByIdAndUpdate(crawlJobId, {
       status: finalStatus,
       completionTime: new Date(),
@@ -50,13 +56,9 @@ linkedinQueue.process(async (job) => {
 
     console.log(`[LinkedIn Worker] Job ${crawlJobId} completed (${finalStatus})`);
 
-    // Trigger portfolio generation if both GitHub and LinkedIn data exist
-    if (updatedProfile.rawData?.github && updatedProfile.rawData?.linkedin) {
-      console.log(`[LinkedIn Worker] Both GitHub and LinkedIn data available. Triggering portfolio generation for user ${updatedProfile.userId}`);
-      await portfolioQueue.add({
-        userId: updatedProfile.userId,
-      });
-    }
+    // Coordinate portfolio generation after both crawlers processed
+    const coordResult = await coordinatePortfolioGeneration(updatedProfile.userId);
+    console.log(`[LinkedIn Worker] Coordination result for user ${updatedProfile.userId}: ${coordResult}`);
 
     return updatedProfile;
   } catch (err) {
